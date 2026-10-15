@@ -1,12 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
-	"context"
 
 	"chronosync-mesh/config"
 	"chronosync-mesh/internal/consistency"
@@ -14,6 +14,7 @@ import (
 	"chronosync-mesh/internal/stitcher"
 	"chronosync-mesh/pkg/mysql_driver"
 	"chronosync-mesh/pkg/neo4j_driver"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 type ProxyServer struct {
@@ -125,10 +126,10 @@ func (s *ProxyServer) handleInterceptedWrite(w http.ResponseWriter, r *http.Requ
 	}
 
 	type WritePayload struct {
-		EntityID  string `json:"entity_id"`
-		Username  string `json:"username"`
-		Email     string `json:"email"`
-		FriendID  int64  `json:"friend_id"`
+		EntityID   string `json:"entity_id"`
+		Username   string `json:"username"`
+		Email      string `json:"email"`
+		FriendID   int64  `json:"friend_id"`
 		FriendName string `json:"friend_name"`
 	}
 
@@ -141,8 +142,8 @@ func (s *ProxyServer) handleInterceptedWrite(w http.ResponseWriter, r *http.Requ
 	ctx := context.Background()
 
 	// 1. Lock down the structural database update securely in MySQL first
-	_, err := s.mysql.DB.ExecContext(ctx, 
-		"INSERT INTO user_profiles (id, username, email) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE username=?, email=?", 
+	_, err := s.mysql.DB.ExecContext(ctx,
+		"INSERT INTO user_profiles (id, username, email) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE username=?, email=?",
 		payload.EntityID, payload.Username, payload.Email, payload.Username, payload.Email)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Primary Relational Commit Failed: %v", err), http.StatusInternalServerError)
@@ -160,12 +161,16 @@ func (s *ProxyServer) handleInterceptedWrite(w http.ResponseWriter, r *http.Requ
 		// Simulating pipeline replication work
 		_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 			// Write the social connection relationship link edge node
-			q1 := "MERGE (u:User {user_id: \$uid}) MERGE (f:User {user_id: fid) SET f.name = fname MERGE (u)-[:FRIEND_OF]->(f)"
-			_, _ = tx.Run(ctx, q1, map[string]any{"uid": entity, "fid": fID, "fname": fName})
+			q1 := "MERGE (u:User {user_id: $uid}) MERGE (f:User {user_id: $fid}) SET f.name = $fname MERGE (u)-[:FRIEND_OF]->(f)"
+			if _, err := tx.Run(ctx, q1, map[string]any{"uid": entity, "fid": fID, "fname": fName}); err != nil {
+				return nil, err
+			}
 
 			// Update version tracking metadata explicitly inside the Graph engine properties
-			q2 := "MERGE (m:SyncMetadata {entity_id: \(uid}) SET m.last_updated_token =\)tok"
-			_, _ = tx.Run(ctx, q2, map[string]any{"uid": entity, "tok": int64(tok)})
+			q2 := "MERGE (m:SyncMetadata {entity_id: $uid}) SET m.last_updated_token = $tok"
+			if _, err := tx.Run(ctx, q2, map[string]any{"uid": entity, "tok": int64(tok)}); err != nil {
+				return nil, err
+			}
 			return nil, nil
 		})
 		log.Printf("[ASYNC SYNC Complete] Propagated token version v%d downstream to Graph Database for Entity: %s", tok, entity)

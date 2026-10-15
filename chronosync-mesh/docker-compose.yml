@@ -1,6 +1,18 @@
 version: '3.8'
 
 services:
+  proxy:
+    build: .
+    container_name: chronosync_proxy
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+
   mysql:
     image: mysql:8.0
     container_name: chronosync_mysql
@@ -11,6 +23,12 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-psecure_password_123"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   neo4j:
     image: neo4j:5.18.0
@@ -22,6 +40,11 @@ services:
       - "7687:7687" # Bolt connection protocol
     volumes:
       - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p graph_secure_password 'RETURN 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
 volumes:
   mysql_data:

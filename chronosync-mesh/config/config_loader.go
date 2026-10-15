@@ -1,15 +1,15 @@
 package config
 
 import (
-	"os"
 	"gopkg.in/yaml.v3"
+	"os"
 )
 
 type Config struct {
-	Server            ServerConfig         `yaml:"server"`
-	Databases         DatabaseConfig       `yaml:"databases"`
-	ConsistencyEngine ConsistencyConfig    `yaml:"consistency_engine"`
-	SchemaRouting     []SchemaRoutingRule  `yaml:"schema_routing_rules"`
+	Server            ServerConfig        `yaml:"server"`
+	Databases         DatabaseConfig      `yaml:"databases"`
+	ConsistencyEngine ConsistencyConfig   `yaml:"consistency_engine"`
+	SchemaRouting     []SchemaRoutingRule `yaml:"schema_routing_rules"`
 }
 
 type ServerConfig struct {
@@ -35,10 +35,10 @@ type DBDetails struct {
 }
 
 type ConsistencyConfig struct {
-	Mode               string           `yaml:"mode"`
-	TokenTracking      bool             `yaml:"token_tracking"`
-	MaxSyncLag         int              `yaml:"max_sync_lag_tolerance_ms"`
-	MicroStall         MicroStallConfig `yaml:"micro_stall"`
+	Mode          string           `yaml:"mode"`
+	TokenTracking bool             `yaml:"token_tracking"`
+	MaxSyncLag    int              `yaml:"max_sync_lag_tolerance_ms"`
+	MicroStall    MicroStallConfig `yaml:"micro_stall"`
 }
 
 type MicroStallConfig struct {

@@ -1,12 +1,12 @@
 package consistency
 
 import (
-	"context"
-	"fmt"
-	"time"
-	"://github.com"
 	"chronosync-mesh/config"
 	"chronosync-mesh/pkg/neo4j_driver"
+	"context"
+	"fmt"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"time"
 )
 
 type MicroStallGuardrail struct {
@@ -55,11 +55,17 @@ func (msg *MicroStallGuardrail) EnforceSessionSafety(ctx context.Context, entity
 			break
 		}
 
-		// Non-blocking wait state to let replication threads catch up
-		time.Sleep(retryInterval)
+		// Wait without holding database resources, and honor request cancellation.
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 
-	return nil
+	return fmt.Errorf("graph replication did not reach token %d for entity %s within %s", expectedToken, entityID, maxStall)
 }
 
 func (msg *MicroStallGuardrail) fetchGraphMetadataToken(ctx context.Context, entityID string) (uint64, error) {
@@ -76,7 +82,11 @@ func (msg *MicroStallGuardrail) fetchGraphMetadataToken(ctx context.Context, ent
 	if result.Next(ctx) {
 		record := result.Record()
 		if val, ok := record.Get("token"); ok && val != nil {
-			return uint64(val.(int64)), nil
+			token, ok := val.(int64)
+			if !ok || token < 0 {
+				return 0, fmt.Errorf("invalid graph synchronization token %T", val)
+			}
+			return uint64(token), nil
 		}
 	}
 

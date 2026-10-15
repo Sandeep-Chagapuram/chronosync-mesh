@@ -6,7 +6,7 @@ server:
 databases:
   relational_core:
     engine: "mysql"
-    host: "127.0.0.1"
+    host: "mysql"
     port: 3306
     user: "root"
     password: "secure_password_123"
@@ -15,7 +15,7 @@ databases:
 
   graph_core:
     engine: "neo4j"
-    uri: "bolt://localhost:7687"
+    uri: "bolt://neo4j:7687"
     user: "neo4j"
     password: "graph_secure_password"
     pool_size: 10

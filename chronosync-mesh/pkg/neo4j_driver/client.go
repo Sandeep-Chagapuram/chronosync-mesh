@@ -1,9 +1,9 @@
 package neo4j_driver
 
 import (
-	"context"
-	"://github.com"
 	"chronosync-mesh/config"
+	"context"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 type Neo4jClient struct {
