@@ -1,0 +1,39 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  workers: 4
+
+databases:
+  relational_core:
+    engine: "mysql"
+    host: "127.0.0.1"
+    port: 3306
+    user: "root"
+    password: "secure_password_123"
+    database_name: "chronosync_db"
+    pool_size: 10
+
+  graph_core:
+    engine: "neo4j"
+    uri: "bolt://localhost:7687"
+    user: "neo4j"
+    password: "graph_secure_password"
+    pool_size: 10
+
+consistency_engine:
+  mode: "session-aware"
+  token_tracking: true
+  max_sync_lag_tolerance_ms: 15
+  micro_stall:
+    enabled: true
+    retry_interval_ms: 2
+    max_stall_timeout_ms: 12
+
+schema_routing_rules:
+  - entity: "user_profile"
+    primary_store: "relational_core"
+    join_keys: ["id"]
+  - entity: "user_social_network"
+    primary_store: "graph_core"
+    relationship_types: ["FRIEND_OF", "FOLLOWS"]
+    join_keys: ["user_id"]

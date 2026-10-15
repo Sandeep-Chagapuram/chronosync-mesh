@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: chronosync_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "secure_password_123"
+      MYSQL_DATABASE: "chronosync_db"
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  neo4j:
+    image: neo4j:5.18.0
+    container_name: chronosync_neo4j
+    environment:
+      NEO4J_AUTH: "neo4j/graph_secure_password"
+    ports:
+      - "7474:7474" # Browser control panel
+      - "7687:7687" # Bolt connection protocol
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  mysql_data:
+  neo4j_data:
