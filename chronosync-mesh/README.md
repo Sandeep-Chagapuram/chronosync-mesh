@@ -20,6 +20,19 @@ The sample write endpoint accepts entity_id, username, email, friend_id, and fri
 
 Stop the stack with docker compose down. To also erase persisted database data, run docker compose down -v.
 
+## Neo4j does not become healthy
+
+If Compose reports `container chronosync_neo4j is unhealthy`, first inspect its startup logs:
+
+    docker compose logs neo4j
+
+Neo4j persists its data and initial password in the `neo4j_data` volume. If this is a development installation with no data to retain, remove the old volumes and start again:
+
+    docker compose down -v
+    docker compose up --build
+
+If the logs report an out-of-memory error, increase Docker Desktop's memory allocation and retry. The current health check allows up to ten and a half minutes for Neo4j to finish starting.
+
 ## Connect another backend
 
 From a backend running on the same host, POST the unified JSON request to http://localhost:8080/api/v1/query and return the proxy JSON response to the frontend. A backend running in another Compose service should use http://proxy:8080/api/v1/query. Only the proxy container needs MySQL and Neo4j drivers.
