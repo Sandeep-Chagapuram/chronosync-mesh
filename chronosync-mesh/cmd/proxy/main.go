@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"chronosync-mesh/config"
@@ -66,6 +67,7 @@ func main() {
 	// 4. Map Network Proxy Routes
 	http.HandleFunc("/api/v1/query", server.handleUnifiedQuery)
 	http.HandleFunc("/api/v1/write", server.handleInterceptedWrite)
+	http.HandleFunc("/healthz", server.handleHealth)
 
 	address := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	log.Printf("[SERVER READY] Listening for network apps on http://%s", address)
@@ -74,14 +76,34 @@ func main() {
 	}
 }
 
+func (s *ProxyServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.mysql.DB.PingContext(ctx); err != nil {
+		http.Error(w, "MySQL unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.graph.Driver.VerifyConnectivity(ctx); err != nil {
+		http.Error(w, "Neo4j unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"ok"}\n`))
+}
+
 func (s *ProxyServer) handleUnifiedQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	defer r.Body.Close()
 	var req parser.UnifiedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "Bad JSON Query Structure", http.StatusBadRequest)
 		return
 	}
@@ -133,13 +155,19 @@ func (s *ProxyServer) handleInterceptedWrite(w http.ResponseWriter, r *http.Requ
 		FriendName string `json:"friend_name"`
 	}
 
+	defer r.Body.Close()
 	var payload WritePayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&payload); err != nil {
 		http.Error(w, "Bad Write Payload Structure", http.StatusBadRequest)
 		return
 	}
+	if strings.TrimSpace(payload.EntityID) == "" || strings.TrimSpace(payload.Username) == "" || strings.TrimSpace(payload.Email) == "" || payload.FriendID <= 0 || strings.TrimSpace(payload.FriendName) == "" {
+		http.Error(w, "entity_id, username, email, friend_id, and friend_name are required", http.StatusBadRequest)
+		return
+	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 
 	// 1. Lock down the structural database update securely in MySQL first
 	_, err := s.mysql.DB.ExecContext(ctx,
@@ -155,25 +183,31 @@ func (s *ProxyServer) handleInterceptedWrite(w http.ResponseWriter, r *http.Requ
 
 	// 3. Fire-and-forget asynchronous write propagation out to Neo4j
 	go func(entity string, fID int64, fName string, tok uint64) {
-		session := s.graph.Driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-		defer session.Close(ctx)
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := s.graph.Driver.NewSession(asyncCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(asyncCtx)
 
 		// Simulating pipeline replication work
-		_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := session.ExecuteWrite(asyncCtx, func(tx neo4j.ManagedTransaction) (any, error) {
 			// Write the social connection relationship link edge node
 			q1 := "MERGE (u:User {user_id: $uid}) MERGE (f:User {user_id: $fid}) SET f.name = $fname MERGE (u)-[:FRIEND_OF]->(f)"
-			if _, err := tx.Run(ctx, q1, map[string]any{"uid": entity, "fid": fID, "fname": fName}); err != nil {
+			if _, err := tx.Run(asyncCtx, q1, map[string]any{"uid": entity, "fid": fID, "fname": fName}); err != nil {
 				return nil, err
 			}
 
 			// Update version tracking metadata explicitly inside the Graph engine properties
 			q2 := "MERGE (m:SyncMetadata {entity_id: $uid}) SET m.last_updated_token = $tok"
-			if _, err := tx.Run(ctx, q2, map[string]any{"uid": entity, "tok": int64(tok)}); err != nil {
+			if _, err := tx.Run(asyncCtx, q2, map[string]any{"uid": entity, "tok": int64(tok)}); err != nil {
 				return nil, err
 			}
 			return nil, nil
 		})
-		log.Printf("[ASYNC SYNC Complete] Propagated token version v%d downstream to Graph Database for Entity: %s", tok, entity)
+		if err != nil {
+			log.Printf("[ASYNC SYNC FAILED] token v%d for entity %s: %v", tok, entity, err)
+			return
+		}
+		log.Printf("[ASYNC SYNC COMPLETE] Propagated token version v%d downstream to Graph Database for Entity: %s", tok, entity)
 	}(payload.EntityID, payload.FriendID, payload.FriendName, mintedToken)
 
 	w.Header().Set("Content-Type", "application/json")

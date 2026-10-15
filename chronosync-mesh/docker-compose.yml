@@ -1,9 +1,6 @@
-version: '3.8'
-
 services:
   proxy:
     build: .
-    container_name: chronosync_proxy
     ports:
       - "8080:8080"
     depends_on:
@@ -12,13 +9,24 @@ services:
       neo4j:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
 
   mysql:
     image: mysql:8.0
-    container_name: chronosync_mysql
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
     environment:
       MYSQL_ROOT_PASSWORD: "secure_password_123"
       MYSQL_DATABASE: "chronosync_db"
+      MYSQL_USER: "chronosync"
+      MYSQL_PASSWORD: "chronosync_password"
+      # Time-zone table import is unnecessary for this service and slow on constrained Docker VMs.
+      MYSQL_INITDB_SKIP_TZINFO: "1"
     ports:
       - "3306:3306"
     volumes:
@@ -28,13 +36,17 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-psecure_password_123"]
       interval: 5s
       timeout: 3s
-      retries: 20
+      start_period: 2m
+      retries: 60
 
   neo4j:
     image: neo4j:5.18.0
-    container_name: chronosync_neo4j
     environment:
       NEO4J_AUTH: "neo4j/graph_secure_password"
+      # Conservative defaults prevent Neo4j from consuming most of Docker Desktop's RAM.
+      NEO4J_server_memory_heap_initial__size: "256m"
+      NEO4J_server_memory_heap_max__size: "512m"
+      NEO4J_server_memory_pagecache_size: "256m"
     ports:
       - "7474:7474" # Browser control panel
       - "7687:7687" # Bolt connection protocol

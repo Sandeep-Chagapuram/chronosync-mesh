@@ -69,16 +69,29 @@ func (se *StitchingEngine) ExecuteAndStitch(ctx context.Context, sqlPlan *parser
 			var fname string
 
 			if val, ok := rec.Get("id"); ok && val != nil {
-				fid = val.(int64)
+				value, ok := val.(int64)
+				if !ok {
+					graphErr = fmt.Errorf("neo4j returned non-integer friend id %T", val)
+					return
+				}
+				fid = value
 			}
 			if val, ok := rec.Get("name"); ok && val != nil {
-				fname = val.(string)
+				value, ok := val.(string)
+				if !ok {
+					graphErr = fmt.Errorf("neo4j returned non-string friend name %T", val)
+					return
+				}
+				fname = value
 			}
 
 			output.Relations = append(output.Relations, FriendRecord{
 				ID:   int(fid),
 				Name: fname,
 			})
+		}
+		if err := res.Err(); err != nil {
+			graphErr = err
 		}
 	}()
 
